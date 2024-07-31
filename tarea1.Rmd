@@ -1,0 +1,401 @@
+---
+title: "Tarea1"
+author: "Sebastian Ahumada"
+date: "2023-03-26"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+  html_document:
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    collapsed: yes
+    smooth_scroll: yes
+    theme: journal
+    highlighted: kate
+    df_print: paged
+    code_folding: show
+---
+
+# Descripción de la Data
+
+La data a utilizar es sobre los nacimientos producidos en chile desde el año 2001 hasta el 2019. Indica algunas características del recien nacido y también tiene información sobre los padres.
+
+```{r setup, include=FALSE, cache = TRUE}
+library(tidyverse)
+library(readr)
+library(dplyr) # Uso del operador pipe %>% 
+library(ggplot2)
+library(psych) #Uso del describe
+library(waterfalls) 
+library(RColorBrewer) #Paleta de colores
+library(raster) #Mapa
+library(rnaturalearth) #Mapa
+library(sf) #Mapa
+library(knitr)
+library(kableExtra)
+library(plotly)
+devtools::install_github("ropensci/rnaturalearthhires")
+```
+
+```{r dataset, message = FALSE, warning=FALSE, include =FALSE, cache = TRUE}
+setwd('/Users/sebastianahumada/Desktop/Magister/Taller de visualización de datos')
+getwd()
+df <- read.csv('Serie_Nacimientos_2001_2019.csv', sep=';')
+df <- data.frame(df)
+```
+
+
+
+```{r}
+table <- kable(head(df), format = "html", align = "c")
+
+table_style <- kable_styling(table, bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
+table_style
+
+```
+
+## Exploración de los datos
+
+Obtener visión general rápida de las principales estadísticas descriptivas de los datos, como la media, la mediana, el rango, la desviación estándar, y los valores mínimos y máximos, así como contar la cantidad de valores faltantes en cada variable.
+
+```{r}
+dim(df)
+```
+
+```{r describing_dataet, echo=FALSE}
+summary_data <- summary(df)
+summary_data
+```
+
+### NA
+
+Revisión de la calidad de los datos. Ver cuantos valores nulos tiene el dataset completo y en específico las columnas que utilizaremos.
+
+```{r na, echo = TRUE}
+sum(is.na(df)) ## Nos indica cuantos hay en el dataset
+# Revisar cuantos NA tiene las columnas que nos interesan
+sum(is.na(df$GLOSA_REGION_RESIDENCIA))
+sum(is.na(df$GRUPO_ETARIO_MADRE))
+sum(is.na(df$GRUPO_ETARIO_PADRE))
+
+```
+
+### Columnas string a utilizar
+
+```{r}
+unique(df$GLOSA_REGION_RESIDENCIA)
+unique(df$GRUPO_ETARIO_PADRE)
+unique(df$GRUPO_ETARIO_PADRE)
+```
+
+### Data Cleaning
+
+Limpieza de la información
+
+```{r cleaning, cache=TRUE}
+df$GRUPO_ETARIO_MADRE <- gsub(" A<d1>OS", "", df$GRUPO_ETARIO_MADRE)
+df$GRUPO_ETARIO_MADRE <- gsub(" A\xd1O", "", df$GRUPO_ETARIO_MADRE)
+df$GRUPO_ETARIO_PADRE <- gsub(" A<d1>OS", "", df$GRUPO_ETARIO_PADRE)
+df$GLOSA_REGION_RESIDENCIA <- gsub("<d1>", "", df$GLOSA_REGION_RESIDENCIA)
+df$GLOSA_REGION_RESIDENCIA <- gsub("<e9>", "", df$GLOSA_REGION_RESIDENCIA)
+df$GLOSA_REGION_RESIDENCIA <- gsub("<e1><f1>", "", df$GLOSA_REGION_RESIDENCIA)
+df$GLOSA_REGION_RESIDENCIA <- gsub("<e1>", "", df$GLOSA_REGION_RESIDENCIA)
+df$GLOSA_REGION_RESIDENCIA <- gsub("<ed>", "", df$GLOSA_REGION_RESIDENCIA)
+df$GLOSA_REGION_RESIDENCIA <- gsub("De Aisn del Gral. C. Ibez del Campo", "Aisén del General Carlos Ibáñez del Campo", df$GLOSA_REGION_RESIDENCIA)
+df$GLOSA_REGION_RESIDENCIA <- gsub("De Los Ros", "Los Ríos", df$GLOSA_REGION_RESIDENCIA)
+df$GLOSA_REGION_RESIDENCIA <- gsub("Del Bobo", "Bío-Bío", df$GLOSA_REGION_RESIDENCIA)
+df$GLOSA_REGION_RESIDENCIA <- gsub("De Tarapac", "Tarapacá", df$GLOSA_REGION_RESIDENCIA)
+df$GLOSA_REGION_RESIDENCIA <- gsub("De La Araucana", "La Araucanía", df$GLOSA_REGION_RESIDENCIA)
+df$GLOSA_REGION_RESIDENCIA <- gsub("De ", "", df$GLOSA_REGION_RESIDENCIA)
+df$GLOSA_REGION_RESIDENCIA <- gsub("Del ", "", df$GLOSA_REGION_RESIDENCIA)
+df$GLOSA_REGION_RESIDENCIA <- gsub("Deuble", "Maule", df$GLOSA_REGION_RESIDENCIA)
+df$GLOSA_REGION_RESIDENCIA <- gsub("Valparaso", "Valparaíso", df$GLOSA_REGION_RESIDENCIA)
+df$GLOSA_REGION_RESIDENCIA <- gsub("Magallanes y de La Antrtica Chilena", "Magallanes y Antártica Chilena", df$GLOSA_REGION_RESIDENCIA)
+df$GLOSA_REGION_RESIDENCIA <- gsub("uble", "Ñuble", df$GLOSA_REGION_RESIDENCIA)
+df$GLOSA_REGION_RESIDENCIA <- gsub("Metropolitana de Santiago", "Región Metropolitana de Santiago", df$GLOSA_REGION_RESIDENCIA)
+df$GLOSA_REGION_RESIDENCIA <- gsub("Libertador B. O'Higgins", "Libertador General Bernardo O'Higgins", df$GLOSA_REGION_RESIDENCIA)
+```
+
+# Hipotesis 1
+
+**La edad de la maternidad difiere entre hombres y mujeres, siendo las mujeres más jóvenes al momento de tener hijos en comparación con los hombres que son padres**.
+
+```{r}
+### Barplot between male and female 
+df_madre <- df %>% 
+  filter(!is.na(MES_NAC)) %>% 
+  mutate(MES_NAC = as.numeric(MES_NAC)) %>% 
+  group_by(GRUPO_ETARIO_MADRE) %>% 
+  summarise(total_nacimientos = n()) %>% 
+  mutate(Genero = "MADRES") %>% 
+  rename(GRUPO_ETARIO = GRUPO_ETARIO_MADRE)
+
+df_padre <-df %>% 
+  filter(!is.na(MES_NAC)) %>% 
+  mutate(MES_NAC = as.numeric(MES_NAC)) %>% 
+  group_by(GRUPO_ETARIO_PADRE) %>% 
+  summarise(total_nacimientos = n()) %>% 
+  mutate(Genero = "PADRES") %>% 
+  rename(GRUPO_ETARIO = GRUPO_ETARIO_PADRE)
+
+df_group <- df_madre %>% add_row(df_padre) %>% 
+  filter(GRUPO_ETARIO != "NO ESPECIFICADO") %>% 
+  filter(GRUPO_ETARIO != " NO ESPECIFICADO")
+
+orden_edades <- c("MENORES 15", "15 A 19", "20 A 24", "25 A 29", "30 A 34", "35 A 39", "40 A 44", "45 A 49", "50 O MAS")
+
+# Convertir la columna a factor con el orden deseado
+df_group$GRUPO_ETARIO <- factor(df_group$GRUPO_ETARIO, levels = orden_edades)
+
+#ggplot(data=df_group, aes(x=GRUPO_ETARIO, y=total_nacimientos, fill=Genero)) +
+#  geom_bar(stat="identity", position=position_dodge())+
+#  theme_minimal() +
+#  labs(x = "Rango Etario", y = "Total de Nacimientos") +
+#  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+df_group2 <- df_group %>% 
+  group_by(GRUPO_ETARIO) %>% 
+  summarise(total_nac = sum(total_nacimientos))
+
+df_group3 <- df_group %>% inner_join(df_group2, by=c("GRUPO_ETARIO"="GRUPO_ETARIO")) %>% 
+  mutate(pctg_nac = total_nacimientos/total_nac)
+
+
+```
+
+```{r, echo = TRUE}
+table <- kable(head(df_group3), format = "html", align = "c")
+
+table_style <- kable_styling(table, bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
+table_style
+```
+
+```{r}
+ggplot(df_group3, aes(fill=Genero, y=pctg_nac, x=GRUPO_ETARIO)) + 
+  geom_bar(position="stack", stat="identity")+
+  geom_text(aes(label = paste0(round(pctg_nac*100, 1), "%")), position = position_stack(vjust = 0.5)) + 
+  labs(x = "Grupo Etario", y = "Porcentaje de nacimientos") +
+  labs(title = "Distribución de Padres y Madres por Grupo Etario")
+
+```
+
+```{r}
+df_gen_year = df
+df_gen_year <- df_gen_year %>%
+  mutate(edad_prom_madre = case_when(
+    GRUPO_ETARIO_MADRE == "MENORES 15" ~ 15,
+    GRUPO_ETARIO_MADRE == "15 A 19" ~ (19+15)/2,
+    GRUPO_ETARIO_MADRE == "20 A 24" ~ (20+24)/2,
+    GRUPO_ETARIO_MADRE == "25 A 29" ~ (25+29)/2,
+    GRUPO_ETARIO_MADRE == "30 A 34" ~ (30+34)/2,
+    GRUPO_ETARIO_MADRE == "35 A 39" ~ (35+39)/2,
+    GRUPO_ETARIO_MADRE == "40 A 44" ~ (40+44)/2,
+    GRUPO_ETARIO_MADRE == "45 A 49" ~ (45+49)/2,
+    GRUPO_ETARIO_MADRE == "50 O MAS" ~ 50,
+    TRUE ~ NA
+  ))
+
+df_gen_year <- df_gen_year %>%
+mutate(edad_prom_padre = case_when(
+  GRUPO_ETARIO_PADRE == "MENORES 15" ~ 15,
+  GRUPO_ETARIO_PADRE == "15 A 19" ~ (19+15)/2,
+  GRUPO_ETARIO_PADRE == "20 A 24" ~ (20+24)/2,
+  GRUPO_ETARIO_PADRE == "25 A 29" ~ (25+29)/2,
+  GRUPO_ETARIO_PADRE == "30 A 34" ~ (30+34)/2,
+  GRUPO_ETARIO_PADRE == "35 A 39" ~ (35+39)/2,
+  GRUPO_ETARIO_PADRE == "40 A 44" ~ (40+44)/2,
+  GRUPO_ETARIO_PADRE == "45 A 49" ~ (45+49)/2,
+  GRUPO_ETARIO_PADRE == "50 O MAS" ~ 50,
+  TRUE ~ NA
+))
+
+
+
+df_gen_year_madre <- subset(df_gen_year, select = c(ANO_NAC, edad_prom_madre))
+
+df_gen_year_madre <- df_gen_year_madre %>% 
+  filter(!is.na(edad_prom_madre)) %>% 
+  mutate(Genero = "MADRES") %>% 
+  rename(edad_prom = edad_prom_madre)
+
+df_gen_year_padre <- subset(df_gen_year, select = c(ANO_NAC, edad_prom_padre))
+df_gen_year_padre <- df_gen_year_padre %>% 
+  filter(!is.na(edad_prom_padre)) %>% 
+  mutate(Genero = "PADRES") %>% 
+  rename(edad_prom = edad_prom_padre)
+
+df_gen_year <- df_gen_year_madre %>% add_row(df_gen_year_padre)
+df_gen_year <- subset(df_gen_year, select = c(ANO_NAC, Genero, edad_prom))
+df_gen_year$edad_prom <- as.double(df_gen_year$edad_prom)
+df_gen_year <- df_gen_year %>%
+  mutate(ANO_NAC = case_when(
+    ANO_NAC <= 2005 ~ "2001-2005",
+    ANO_NAC > 2005 & ANO_NAC <= 2010 ~ "2006-2010",
+    ANO_NAC > 2010 & ANO_NAC <= 2015 ~ "2011-2015",
+    ANO_NAC > 2015 & ANO_NAC <= 2019 ~ "2016-2019",
+    TRUE ~ NA
+  ))
+
+
+year_list <- unique(df_gen_year$ANO_NAC)
+
+
+```
+
+```{r}
+table <- kable(head(df_gen_year), format = "html", align = "c")
+
+table_style <- kable_styling(table, bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
+table_style
+```
+
+```{r}
+
+# Crear el boxplot
+ggplot(df_gen_year, aes(x = interaction(Genero, ANO_NAC), y = edad_prom, fill = Genero)) + 
+  geom_boxplot() +
+  labs(x = "Categorías", y = "Valor") +
+  scale_fill_manual(values = c("#FFB6C1", "#56B4E9")) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_vline(xintercept = seq(2.5, length(year_list)+4, 2), 
+             color = "black", size = 1, linetype = "solid") +
+  annotate("text", x = 1.5, y = max(df_gen_year$edad_prom) + 5, label = "Primer Periodo", color = "black") +
+  annotate("text", x = 1.5, y = max(df_gen_year$edad_prom) + 3, label = "(2001 - 2005)", color = "black") + 
+  annotate("text", x = 1.5 + 2, y = max(df_gen_year$edad_prom) + 5, label = "Segundo Periodo", color = "black") +
+  annotate("text", x = 1.5 + 2, y = max(df_gen_year$edad_prom) + 3, label = "(2006 - 2010)", color = "black") +
+  annotate("text", x = 1.5 + 4, y = max(df_gen_year$edad_prom) + 5, label = "Tercer Periodo", color = "black") +
+  annotate("text", x = 1.5 + 4, y = max(df_gen_year$edad_prom) + 3, label = "(2011 - 2015)", color = "black") +
+  annotate("text", x = 1.5 + 6, y = max(df_gen_year$edad_prom) + 5, label = "Cuarto Periodo", color = "black") +
+  annotate("text", x = 1.5 + 6, y = max(df_gen_year$edad_prom) + 3, label = "(2016 - 2019)", color = "black") +
+labs(title = "Distribución de edades en diferentes periodos de tiempo")
+```
+
+# Hipótesis 2
+
+**Con el pasar de los años, la tasa de natalidad en Chile ha experimentado una reducción.**
+
+```{r}
+### Line chart
+df_line <- df %>% 
+  filter(!is.na(MES_NAC)) %>% 
+  mutate(MES_NAC = as.numeric(MES_NAC)) %>% 
+  group_by(ANO_NAC) %>% 
+  summarise(total_nacimientos = n())
+
+
+
+# ggplot(df_line, aes(x=ANO_NAC, y=total_nacimientos)) + 
+#  geom_point(shape=18, color="blue")+
+#  geom_smooth(method=lm,  linetype="dashed",
+#              color="red", fill="blue") +
+#labs(x = "Año", y = "Total de nacimientos") +
+#  labs(title = "Total de nacimientos por año")
+```
+
+```{r}
+table <- kable(head(df_line), format = "html", align = "c")
+
+table_style <- kable_styling(table, bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
+table_style
+```
+
+```{r}
+ggplot(data=df_line, aes(x=ANO_NAC, y=total_nacimientos, group=1)) +
+  geom_line()+
+  geom_point() +
+  labs(x = "Año", y = "Total de nacimientos") +
+  labs(title = "Total de nacimientos por año")
+```
+
+```{r}
+### Waterfall
+df_wtf <- df %>% 
+  filter(GLOSA_REGION_RESIDENCIA != "Ignorada") %>% 
+  group_by(ANO_NAC,GLOSA_REGION_RESIDENCIA) %>% 
+  summarise(total_nacimientos = n())
+
+df_promedio <- df_wtf %>%
+  arrange(GLOSA_REGION_RESIDENCIA, ANO_NAC) %>%
+  group_by(GLOSA_REGION_RESIDENCIA) %>%
+  mutate(variacion = total_nacimientos - lag(total_nacimientos, default = first(total_nacimientos))) %>%
+  group_by(ANO_NAC,GLOSA_REGION_RESIDENCIA) %>%
+  summarise(promedio_variacion = mean(variacion)) %>% 
+  mutate(ANO_NAC = as.character(ANO_NAC)) 
+
+df_promedio2 <- df_wtf %>%
+  arrange(GLOSA_REGION_RESIDENCIA, ANO_NAC) %>%
+  group_by(GLOSA_REGION_RESIDENCIA) %>%
+  mutate(variacion = total_nacimientos - lag(total_nacimientos, default = first(total_nacimientos))) %>%
+  group_by(ANO_NAC) %>%
+  summarise(promedio_variacion = mean(variacion)) %>% 
+  mutate(ANO_NAC = as.character(ANO_NAC)) 
+
+    
+
+```
+
+```{r}
+table <- kable(head(df_promedio2), format = "html", align = "c")
+
+table_style <- kable_styling(table, bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
+table_style
+```
+
+
+```{r}
+waterfall(df_promedio2, calc_total = TRUE,
+          total_rect_color = "orange",
+          total_rect_text_color = "white") +
+      labs(title = "Número de nacimiento comparación año anterior", x = "Años", y = "Total Nacimientos") +
+  labs(x = "Año", y = "Total de Nacimientos")
+
+```
+
+
+```{r, warning=FALSE}
+df_map <- df_wtf
+
+df_map_data <- df_map %>%
+  arrange(GLOSA_REGION_RESIDENCIA, ANO_NAC) %>%
+  group_by(GLOSA_REGION_RESIDENCIA) %>%
+  mutate(variacion = total_nacimientos - lag(total_nacimientos, default = first(total_nacimientos))) %>%
+  group_by(GLOSA_REGION_RESIDENCIA) %>%
+  summarise(promedio_variacion = mean(variacion))
+
+chile <- ne_states(country = "chile", returnclass = "sf")
+mapa_chile <- dplyr::select(chile, , name)
+
+
+chile_mapa_datos <- left_join(mapa_chile, df_map_data, by=c("name"="GLOSA_REGION_RESIDENCIA"))
+chile_mapa_datos$name <- gsub("Región Metropolitana de Santiago","Metropolitana de Santiago", chile_mapa_datos$name)
+chile_mapa_datos$name <- gsub("Libertador General Bernardo O'Higgins","Libertador B. O'Higgins", chile_mapa_datos$name)
+
+
+ggmap <- ggplot(chile_mapa_datos) +
+  geom_sf(aes(fill = promedio_variacion)) +
+  scale_fill_gradient2(low = "red", mid = "red", high = "green",
+                       midpoint = -210, na.value = "grey50", name = "Promedio Variación") +
+  theme_void() +
+  geom_sf_label(data = chile_mapa_datos, aes(label = paste(name, round(promedio_variacion,2), sep = "\n")), 
+                size = 2, color = "black", fontface = "bold") +
+  labs(title = "Variación promedio de nacimientos por región") 
+
+ggmap <- plotly::plotly_build(ggmap)
+
+```
+
+El siguiente mapa muestra la variación promedio por año de la tasa de natalidad por región en Chile.
+
+```{r, warning=FALSE}
+ggmap$x$data[[1]]$text <- paste("Región:", chile_mapa_datos$name, "<br>",
+                            "Promedio Variación:", round(chile_mapa_datos$promedio_variacion, 2))
+
+ggmap
+```

@@ -1,0 +1,617 @@
+---
+title: "WebScrappingBuscalibre"
+author: "Sebastian Ahumada"
+date: "2023-06-01"
+output:
+  html_document:
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    collapsed: yes
+    smooth_scroll: yes
+    theme: journal
+    highlighted: kate
+    df_print: paged
+    code_folding: show
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+---
+
+# El sitio elegido
+
+La Web elegida para hacer Web Scraping es buscalibre.cl. Busca Libre es un sitio web de origen chileno con presencia en algunos otros países de habla hispana y estados unidos, se dedican a gestionar ventas de productos de otros vendedores, pero su fuerte es la venta de libros, Busca libre es bastante similar Amazon en sus inicios.
+
+# Librerias
+library(dplyr) <br>
+library(RSelenium) <br>
+library(rvest) <br>
+library(tidyverse) <br>
+library(DT) <br>
+library(ggplot2) <br>
+library(gridExtra) <br>
+
+```{r, echo=FALSE, include = FALSE}
+library(dplyr)
+library(RSelenium)
+library(rvest)
+library(tidyverse)
+library(DT)
+library(ggplot2)
+library(gridExtra)
+```
+
+
+# Función Recolectora
+
+Se genero una función para extraer los datos asociados a un término buscado en buscalibre.cl. Los datos que recolecta son: “id_producto”, “titulo”, “autor”, “precio”, “nota”, “votaciones”, “link”
+
+## Que hace la Función:
+1. Abre una web de mozilla en la web buscalibre.cl.
+2. Escribe en el buscador el termino deseado.
+3. Espera a que la pagina cargue.
+4. Recolecta y normaliza los datos de cada item.
+5. Ve si hay más paginas por recorrer, si las hay va a la siguiente pagina y se devuelve al punto 3.
+6. Entrega un dataframe con los datos asociados a la búsqueda.
+
+```{r}
+get_books <- function(busqueda,espera) {
+  rD <- rsDriver(port= sample(7600)[1], browser=c("firefox"), chromever = NULL)
+  remDr <- rD[["client"]]
+  remDr$navigate("https://www.buscalibre.cl/")
+  
+  # Búsqueda del término
+  input_busqueda <- remDr$findElement(using = "css selector", "input[name='q']")
+  input_busqueda$clearElement()
+  input_busqueda$sendKeysToElement(list(busqueda))
+  input_busqueda$sendKeysToElement(list(key = "enter"))
+  Sys.sleep(10)
+  
+  books_df <- data.frame(
+    id_producto = character(),
+    titulo = character(),
+    autor = character(),
+    precio = numeric(),
+    nota = numeric(),
+    votaciones = numeric(),
+    link = character(),
+    stringsAsFactors = FALSE
+  )
+  
+  # Navegar a través de las páginas
+  while (TRUE) {
+    # Extracción de información de los libros
+    book_elements <- remDr$findElements(using = 'css', '.box-producto')
+    for (book_element in book_elements) {
+      book_html <- read_html(book_element$getElementAttribute('outerHTML')[[1]])
+      id_producto <- book_element$getElementAttribute('data-id_producto')[[1]]
+      titulo <- html_text(html_node(book_html, 'h3.nombre'))
+      autor <- html_text(html_node(book_html, 'div.autor'))
+      precio <- as.numeric(gsub("\\D", "", html_text(html_node(book_html, 'p.precio-ahora strong'))))
+      nota_raw <- html_attr(html_node(book_html, '.box-stars span'), 'class')  # Extrae la nota del libro
+      nota <- as.numeric(ifelse(nchar(gsub("\\D", "", nota_raw)) == 2, as.numeric(gsub("\\D", "", nota_raw))/10, gsub("\\D", "", nota_raw))) # Convierte a numérico y gestiona notas con decimales
+      votaciones <- as.numeric(gsub("\\D", "", html_text(html_node(book_html, '.box-stars span.margin-left-5')))) # Extrae la cuenta de votaciones
+      link <- html_attr(html_node(book_html, 'a'), 'href')
+      books_df <- rbind(books_df, data.frame(
+        id_producto = id_producto,
+        titulo = titulo,
+        autor = autor,
+        precio = precio,
+        nota = nota,
+        votaciones = votaciones,
+        link = link,
+        stringsAsFactors = FALSE
+      ))
+    }
+    
+    # Comprueba si existe una página siguiente
+    next_page_elements <- remDr$findElements(using = 'css', '.pagnNext')
+    if (length(next_page_elements) == 0) {
+      # No hay más páginas, sal del bucle
+      break
+    }
+    
+    # Navega a la página siguiente
+    next_page_link <- next_page_elements[[1]]$getElementAttribute('href')[[1]]
+    remDr$navigate(next_page_link)
+    Sys.sleep(espera)  # Espera a que la página se cargue
+  }
+  
+
+  # Retorno de dataframes
+  return(books_df)
+}
+```
+
+
+# Recopilación de datos
+
+Se ejecuta la función para las casos de sociología, informática, ciencia ficción, Novelas gráficas, que dese ahora trataremos como categorías, se recopilo las categorías y se guardo los datos en su versión con NA y sin NA.
+
+```{r}
+Sociologia <- get_books("sociología",2)
+```
+
+```{r}
+Informatica <- get_books("informática",2)
+```
+
+
+```{r}
+CFiccion <- get_books("ciencia ficción",2)
+```
+
+
+```{r}
+NGraficas <- get_books("Novelas gráficas",2)
+```
+
+```{r}
+comunista <- get_books("comunista",2)
+```
+
+```{r}
+nazismo <- get_books("nazismo",2)
+```
+
+
+```{r}
+#respaldar datos con NA. porque la recopilacion es lenta
+NA_Sociologia <- Sociologia
+NA_Informatica <- Informatica
+NA_CFiccion <- CFiccion
+NA_NGraficas <- NGraficas
+NA_comunista <- comunista
+NA_nazismo <- nazismo
+```
+
+
+# Dataset
+
+Una vez recopilada la información por categoría, se procede a unir cada uno de los dataset generados en un solo gran dataset. Para esto se crea una columna nueva a cada uno de los dataset llamada categoría.
+
+```{r}
+CFiccion <- CFiccion %>% mutate(categoria = "Ciencia Ficción")
+CFiccion <- CFiccion %>% mutate(categoria_mayor = "Recreación")
+comunista <- comunista %>% mutate(categoria = "Política")
+comunista <- comunista %>% mutate(categoria_mayor = "Política")
+nazismo <- nazismo %>% mutate(categoria = "Política")
+nazismo <- nazismo %>% mutate(categoria_mayor = "Política")
+Informatica <- Informatica %>% mutate(categoria = "Informática")
+Informatica <- Informatica %>% mutate(categoria_mayor = "Técnico")
+NGraficas <- NGraficas %>% mutate(categoria = "Novelas Gráficas")
+NGraficas <- NGraficas %>% mutate(categoria_mayor = "Recreación")
+Sociologia <- Sociologia %>% mutate(categoria = "Sociología")
+Sociologia <- Sociologia %>% mutate(categoria_mayor = "Técnico")
+```
+
+Unimos todos los dataframe en uno solo:
+```{r}
+df <- bind_rows(CFiccion, comunista, nazismo, Informatica, NGraficas, Sociologia)
+```
+
+```{r}
+df
+```
+
+
+## Análisis del dataset 
+### Exploración de los datos
+
+Obtener visión general rápida de las principales estadísticas descriptivas de los datos, como la media, la mediana, el rango, la desviación estándar, y los valores mínimos y máximos, así como contar la cantidad de valores faltantes en cada variable.
+
+```{r}
+dim(df)
+```
+
+```{r describing_dataet, echo=FALSE}
+summary_data <- summary(df)
+summary_data
+```
+
+
+### Análisis de Valores Nulos
+Revisión de la calidad de los datos. Ver cuantos valores nulos tiene el dataset completo y en específico las columnas que utilizaremos.
+
+```{r na, echo = TRUE}
+sum(is.na(df)) ## Nos indica cuantos hay en el dataset
+
+# Revisar cuantos NA tiene las columnas que nos interesan
+sum(is.na(df$titulo))
+sum(is.na(df$precio))
+sum(is.na(df$votaciones))
+```
+
+Como se puede apreciar de los 3610 datos que tenemos, solo 285 libros tienen votaciones, lo que es el lógico, ya que la mayoría de las personas no suelen dejar sus comentarios/opiniones en los libros que compran.
+
+# Hipótesis 1
+
+**La gente en Chile se interesa más por libros recreativos**
+
+Para efectos de esta hipótesis, solo utilizaremos las categorías descritas anteriormente. Queremos utilizar este dataset de prueba para abrir la puerta a un anális más extenso.
+Para esto hemos clasificado las categorías de la siguiente forma:
+
+- Lectura Técnica: Informática y sociología
+- Lectura Recreativa: Ciencia Ficción y Novelas gráficas
+- Política: Comunismo y Nazismo
+
+Además se procederá a la comprobación de la hipótesis utilizando 3 métricas básicas, las cuales son: 
+
+- Oferta: Cantidad de ejemplares a la venta por categoría.
+- Nota: Notas asignadas a cada libro por categoría. 
+- Numero de opiniones/votaciones: Cantidad de opiniones realizadas en cada categoría.
+
+## Oferta
+
+```{r}
+conteo_data <- df %>%
+  group_by(categoria_mayor) %>%
+  summarize(conteo = n())
+
+conteo_data <- conteo_data %>%
+  mutate(porcentaje = (conteo / sum(conteo)) * 100)
+
+# Crear el gráfico de pastel
+ggplot(conteo_data, aes(x = "", y = porcentaje, fill = categoria_mayor)) +
+  geom_bar(width = 1, stat = "identity") +
+  coord_polar("y", start = 0) +
+  labs(x = "", y = "", fill = "Categoría mayor") +
+  ggtitle("Porcentaje de Libros a la venta por categoría mayor") +
+  theme_minimal() +
+  theme(legend.position = "right") + 
+  geom_text(aes(label = paste0(categoria_mayor, ": ", round(porcentaje, 1), "%")), position = position_stack(vjust = 0.5))
+```
+
+```{r}
+count_data <- df %>%
+  group_by(categoria_mayor,categoria) %>%
+  summarize(count = n()) %>%
+  arrange(desc(count))  # Ordenar de mayor a menor
+
+# Crear el gráfico de barras con colores según categoría_mayor
+ggplot(count_data, aes(x = reorder(categoria, -count), y = count)) +
+  geom_bar(stat = "identity", aes(fill = categoria_mayor)) +
+  labs(x = "Categoría", y = "Total de Libros") +
+  labs(title = "Total de Libros a la venta por categoría") +
+  scale_fill_discrete()
+```
+
+
+
+## Nota
+
+```{r}
+datos <- df[!is.na(df$nota), ]
+
+ggplot(datos, aes(x = categoria, y = nota)) +
+  geom_boxplot(fill = "#4C72B0", color = "#1F3552", alpha = 0.8) +  # Color y estilo de las cajas
+  geom_jitter(width = 0.2, alpha = 0.6, color = "#D2D3D4") +  # Puntos superpuestos para mayor claridad
+  labs(x = "Categoría mayor", y = "Nota") +
+  ggtitle("Distribución de notas por categoría") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 12, face = "bold"))
+```
+
+
+```{r}
+datos <- df[!is.na(df$nota), ]
+
+ggplot(datos, aes(x = categoria_mayor, y = nota)) +
+  geom_boxplot(fill = "#4C72B0", color = "#1F3552", alpha = 0.8) +  # Color y estilo de las cajas
+  geom_jitter(width = 0.2, alpha = 0.6, color = "#D2D3D4") +  # Puntos superpuestos para mayor claridad
+  labs(x = "Categoría mayor", y = "Nota") +
+  ggtitle("Distribución de notas por categoría mayor") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 12, face = "bold"))
+```
+
+
+## Opiniones
+
+```{r}
+df_group <- df %>%
+  group_by(categoria_mayor) %>%
+  summarize(total_libros = n(),
+            libros_con_votaciones = sum(!is.na(votaciones)),
+            suma_votaciones = sum(votaciones, na.rm = TRUE)) %>%
+  mutate(libros_sin_votaciones = total_libros - libros_con_votaciones)
+
+
+# Combinar las cantidades de libros en una sola columna
+df_group <- df_group %>%
+  tidyr::gather(key = "tipo", value = "cantidad", libros_con_votaciones, libros_sin_votaciones)
+
+# Calcular los porcentajes
+df_group <- df_group %>%
+  group_by(categoria_mayor) %>%
+  mutate(porcentaje = cantidad / sum(cantidad) * 100)
+
+# Ordenar las categorías mayores de mayor a menor
+df_group$categoria_mayor <- reorder(df_group$categoria_mayor, -df_group$cantidad, sum)
+
+# Crear el gráfico de barras apiladas ordenadas con etiquetas de porcentaje
+ggplot(df_group, aes(x = categoria_mayor, y = cantidad, fill = tipo)) +
+  geom_col(position = "stack", color = "white", alpha = 0.8) +
+  geom_text(aes(label = paste0(round(porcentaje, 1), "%")), position = position_stack(vjust = 0.5), color = "white", size = 3) +
+  geom_text(aes(label = paste0(round(porcentaje, 1), "%"), y = cantidad + 0.5), position = position_stack(vjust = 0.5), color = "black", size = 3) +
+  labs(x = "Categoría mayor", y = "Cantidad de libros") +
+  ggtitle("Cantidad de libros con y sin votaciones por categoría mayor") +
+  scale_fill_manual(values = c("#4C72B0", "#DD8452"),
+                    labels = c("Con votaciones", "Sin votaciones")) +
+  theme_minimal()
+```
+
+## Resumen
+
+Resumiendo, del análisis anterior:
+
+1. La mayor cantidad de libros ofertados en al web (comparando solo las categorías descritas anteriormente) corresponden a libros técnicos (71% app).
+
+2. Las notas puestas por los lectores son bien similares, casi todas positivas (5 estrellas)
+
+3. Recreación es la categoría que tiene más libros con opiniones y también la que tiene más opiniones por libros ofertados.
+
+En conclusión, basado en lo que se mencionó anteriormente no podemos concluir que efectivamente recreación es la categoría que más se lee en Chile, pero si podemos tener noción de que la gente suele opinar mucho más sobre estos libros que en el resto de categorías analizadas.
+
+
+# Hipótesis 2
+
+**Los libros más caros tienen mejor Valoración o nota**
+
+Para esta hipótesis solo utilizaremos los libros que tengan al menos una valoración. Para esto se filtrará el dataset utilizado anteriormente:
+
+```{r}
+df_filter <- df %>% filter(!is.na(nota))
+
+df_filter_tecnico <- df_filter %>% filter(categoria_mayor == "Técnico")
+df_filter_recreativo <- df_filter %>% filter(categoria_mayor == "Recreación")
+df_filter_politica_mayor <- df_filter %>% filter(categoria_mayor == "Política")
+
+
+df_filter_sociologia <- df_filter %>% filter(categoria == "Sociología")
+df_filter_informatica <- df_filter %>% filter(categoria == "Informática")
+df_filter_cf <- df_filter %>% filter(categoria == "Ciencia Ficción")
+df_filter_politica <- df_filter %>% filter(categoria == "Política")
+df_filter_ngraf <- df_filter %>% filter(categoria == "Novelas Gráficas")
+```
+
+Primero analizamos la relación a nivel general, es decir utilizando todos los libros del dataset.
+
+```{r}
+modelo <- lm(precio ~ nota, data = df_filter)
+
+# Calcular el R cuadrado
+r_cuadrado <- cor(df_filter$nota, df_filter$precio)
+
+# Crear el scatter plot con la línea de regresión y el R cuadrado
+ggplot(df_filter, aes(y = nota, x = precio)) +
+  geom_point(size = 3, color = "#4C72B0") +
+  geom_smooth(method = "lm", se = FALSE, color = "#DD8452", size = 1, alpha = 0.2) +
+  labs(y = "Nota", x = "Precio", title = "Correlación Nota vs Precio") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 16, face = "bold"),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10),
+        legend.position = "none") +
+  annotate("text", y = min(df_filter$nota)+3.8, x = max(df_filter$precio)-15000, 
+           label = paste0("R cuadrado: ", round(r_cuadrado, 2)),
+           hjust = 0, vjust = 1, size = 4, fontface = "bold", color = "#DD8452")
+```
+Luego se analiza a nivel de categoría mayor, para identificart si es que existen alguna relación precio nota a este nivel
+
+
+
+```{r}
+
+r_cuadrado <- cor(df_filter_tecnico$nota, df_filter_tecnico$precio)
+
+plot_tecnico <- ggplot(df_filter_tecnico, aes(x = precio, y = nota)) +
+  geom_point() +
+  ggtitle("Técnico") +
+  xlab("Precio") +
+  ylab("Nota") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 16, face = "bold"),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10),
+        legend.position = "none") +
+  annotate("text", y = min(df_filter_tecnico$nota) + 0.5, x = min(df_filter_tecnico$precio) + 1, 
+           label = paste0("R cuadrado: ", round(r_cuadrado, 2)),
+           hjust = 0, vjust = 1, size = 4, fontface = "bold", color = "#DD8452")
+
+r_cuadrado <- cor(df_filter_recreativo$nota, df_filter_recreativo$precio)
+
+plot_recreativo <- ggplot(df_filter_recreativo, aes(x = precio, y = nota)) +
+  geom_point() +
+  ggtitle("Recreativo") +
+  xlab("Precio") +
+  ylab("Nota") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 16, face = "bold"),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10),
+        legend.position = "none") +
+  scale_y_continuous(limits = c(1, 5)) +
+  annotate("text", y = min(df_filter_recreativo$nota)+0.5, x = min(df_filter_recreativo$precio) + 1, 
+           label = paste0("R cuadrado: ", round(r_cuadrado, 2)),
+           hjust = 0, vjust = 1, size = 4, fontface = "bold", color = "#DD8452")
+
+r_cuadrado <- cor(df_filter_politica_mayor$nota, df_filter_politica_mayor$precio)
+
+plot_pol_mayor <- ggplot(df_filter_politica_mayor, aes(x = precio, y = nota)) +
+  geom_point() +
+  ggtitle("Política") +
+  xlab("Precio") +
+  ylab("Nota") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 16, face = "bold"),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10),
+        legend.position = "none") +
+  annotate("text", y = min(df_filter_politica_mayor$nota)+0.5, x = min(df_filter_politica_mayor$precio)+1, 
+           label = paste0("R cuadrado: ", round(r_cuadrado, 2)),
+           hjust = 0, vjust = 1, size = 4, fontface = "bold", color = "#DD8452")
+
+grid.arrange(plot_tecnico,plot_recreativo, plot_pol_mayor, ncol = 2)
+```
+
+Finalmente revisamos si es que existen relaciones nota precio a nivel de categoría simple.
+
+
+```{r}
+
+r_cuadrado <- cor(df_filter_sociologia$nota, df_filter_sociologia$precio)
+
+plot_Sociologia <- ggplot(df_filter_sociologia, aes(x = precio, y = nota)) +
+  geom_point() +
+  ggtitle("Sociología") +
+  xlab("Precio") +
+  ylab("Nota") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 16, face = "bold"),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10),
+        legend.position = "none") +
+  annotate("text", y = min(df_filter_sociologia$nota)+0.5, x = min(df_filter_sociologia$precio)+1, 
+           label = paste0("R cuadrado: ", round(r_cuadrado, 2)),
+           hjust = 0, vjust = 1, size = 4, fontface = "bold", color = "#DD8452")
+
+
+r_cuadrado <- cor(df_filter_informatica$nota, df_filter_informatica$precio)
+
+plot_Informatica <- ggplot(df_filter_informatica, aes(x = precio, y = nota)) +
+  geom_point() +
+  ggtitle("Informática") +
+  xlab("Precio") +
+  ylab("Nota") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 16, face = "bold"),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10),
+        legend.position = "none") +
+  scale_y_continuous(limits = c(1, 5)) +
+  annotate("text", y = min(df_filter_informatica$nota)+0.5, x = min(df_filter_informatica$precio)+1, 
+           label = paste0("R cuadrado: ", round(r_cuadrado, 2)),
+           hjust = 0, vjust = 1, size = 4, fontface = "bold", color = "#DD8452")
+
+r_cuadrado <- cor(df_filter_cf$nota, df_filter_cf$precio)
+
+plot_CFiccion <- ggplot(df_filter_cf, aes(x = precio, y = nota)) +
+  geom_point() +
+  ggtitle("Ciencia Ficción") +
+  xlab("Precio") +
+  ylab("Nota") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 16, face = "bold"),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10),
+        legend.position = "none") +
+  scale_y_continuous(limits = c(1, 5)) +
+  annotate("text", y = min(df_filter_cf$nota)+0.5, x = min(df_filter_cf$precio), 
+           label = paste0("R cuadrado: ", round(r_cuadrado, 2)),
+           hjust = 0, vjust = 1, size = 4, fontface = "bold", color = "#DD8452")
+
+modelo <- lm(precio ~ nota, data = df_filter_politica)
+r_cuadrado <- summary(modelo)$r.squared
+
+
+r_cuadrado <- cor(df_filter_politica$nota, df_filter_politica$precio)
+
+plot_politica <- ggplot(df_filter_politica, aes(x = precio, y = nota)) +
+  geom_point() +
+  ggtitle("Política") +
+  xlab("Precio") +
+  ylab("Nota") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 16, face = "bold"),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10),
+        legend.position = "none") +
+  annotate("text", y = min(df_filter_politica$nota)+0.5, x = min(df_filter_politica$precio)+1, 
+           label = paste0("R cuadrado: ", round(r_cuadrado, 2)),
+           hjust = 0, vjust = 1, size = 4, fontface = "bold", color = "#DD8452")
+
+modelo <- lm(nota ~ precio, data = df_filter_ngraf)
+r_cuadrado <- summary(modelo)$r.squared
+
+
+r_cuadrado <- cor(df_filter_ngraf$nota, df_filter_ngraf$precio)
+
+plot_NGraficas <- ggplot(df_filter_ngraf, aes(x = precio, y = nota)) +
+  geom_point() +
+  ggtitle("Novelas Gráficas") +
+  xlab("Precio") +
+  ylab("Nota") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 16, face = "bold"),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10),
+        legend.position = "none") +
+  scale_y_continuous(limits = c(1, 5)) +
+  annotate("text", y = min(df_filter_ngraf$nota)+0.5, x = min(df_filter_ngraf$precio)+1, 
+           label = paste0("R cuadrado: ", round(r_cuadrado, 2)),
+           hjust = 0, vjust = 1, size = 4, fontface = "bold", color = "#DD8452")
+
+# Juntar los 4 gráficos en una sola visualización
+grid.arrange(plot_Sociologia, plot_Informatica, plot_CFiccion, plot_NGraficas,plot_politica, ncol = 2)
+```
+
+El resultado indica que no hay correlación, en la mayoría de las categorías, excepto en informática donde la correlación es de -0,74, una correlación fuerte negativa, lo que implica que entre más aumenta la nota más baja el precio del libro, el caso de informática parece sospechoso, para ver si esto es consistente, hicimos nuevamente el cálculo de la correlación eliminado los outlayers.
+
+Se utilizo el rango intercuartil (IQR, por sus siglas en inglés) para identificar y eliminar valores atípicos (outliers) en las categorías.
+
+```{r}
+#Sin outlayer
+
+# Para Sociologia
+# Calcular IQR para el precio en Sociologia
+IQR_precio_Sociologia <- IQR(df_filter_sociologia$precio)
+# Eliminar valores atípicos basados sólo en el precio
+Sociologia_sin_outliers <- df_filter_sociologia[!(df_filter_sociologia$precio < quantile(df_filter_sociologia$precio, 0.25) - 1.5 * IQR_precio_Sociologia |
+                                          df_filter_sociologia$precio > quantile(df_filter_sociologia$precio, 0.75) + 1.5 * IQR_precio_Sociologia),]
+
+# Calcular correlación con la eliminación de outliers sólo en el precio
+correlacion_Sociologia_sin_outliers <- cor(Sociologia_sin_outliers$nota, Sociologia_sin_outliers$precio)
+
+
+# Para Informatica
+IQR_precio_Informatica <- IQR(df_filter_informatica$precio)
+Informatica_sin_outliers <- df_filter_informatica[!(df_filter_informatica$precio < quantile(df_filter_informatica$precio, 0.25) - 1.5 * IQR_precio_Informatica |
+                                            df_filter_informatica$precio > quantile(df_filter_informatica$precio, 0.75) + 1.5 * IQR_precio_Informatica),]
+correlacion_Informatica_sin_outliers <- cor(Informatica_sin_outliers$nota, Informatica_sin_outliers$precio)
+
+# Para CFiccion
+IQR_precio_CFiccion <- IQR(df_filter_cf$precio)
+CFiccion_sin_outliers <- df_filter_cf[!(df_filter_cf$precio < quantile(df_filter_cf$precio, 0.25) - 1.5 * IQR_precio_CFiccion |
+                                      df_filter_cf$precio > quantile(df_filter_cf$precio, 0.75) + 1.5 * IQR_precio_CFiccion),]
+correlacion_CFiccion_sin_outliers <- cor(CFiccion_sin_outliers$nota, CFiccion_sin_outliers$precio)
+
+# Para Politica
+IQR_precio_politica <- IQR(df_filter_politica$precio)
+politica_sin_outliers <- df_filter_politica[!(df_filter_politica$precio < quantile(df_filter_politica$precio, 0.25) - 1.5 * IQR_precio_politica |
+                                        df_filter_politica$precio > quantile(df_filter_politica$precio, 0.75) + 1.5 * IQR_precio_politica),]
+correlacion_politica_sin_outliers <- cor(politica_sin_outliers$nota, politica_sin_outliers$precio)
+
+
+# Para NGraficas
+IQR_precio_NGraficas <- IQR(df_filter_ngraf$precio)
+NGraficas_sin_outliers <- df_filter_ngraf[!(df_filter_ngraf$precio < quantile(df_filter_ngraf$precio, 0.25) - 1.5 * IQR_precio_NGraficas |
+                                        df_filter_ngraf$precio > quantile(df_filter_ngraf$precio, 0.75) + 1.5 * IQR_precio_NGraficas),]
+correlacion_NGraficas_sin_outliers <- cor(NGraficas_sin_outliers$nota, NGraficas_sin_outliers$precio)
+
+
+correlaciones_df_sout <- data.frame(
+  Categoria = c("Sociología", "Informática", "Ciencia Ficción","Politica" ,"Novela Gráfica"),
+  Correlacion = c(correlacion_Sociologia_sin_outliers, correlacion_Informatica_sin_outliers, correlacion_CFiccion_sin_outliers,correlacion_politica_sin_outliers, correlacion_NGraficas_sin_outliers)
+)
+
+print(correlaciones_df_sout)
+```
+La correlación sin valores atípicos cambia la correlación de informática a una correlación moderada, mientras que el resto de categorías se mantienen igual, sin tener correlación nota vs precio. 
+
+Como se puede apreciar en los análisis anteirores, se concluye que no existe una correlación lineal entre precio y nota de un libro, por lo cual nuestra hipótesis es falsa los libros más caros no tienen mejor Valoración o nota.
+
