@@ -1,6 +1,6 @@
 # R-scripts
 
-Welcome to my R Scripts repository! This repository contains personal projects and tasks completed using R, particularly focused on data visualization and web scraping.
+Welcome to my R Scripts repository! This repository contains personal projects and tasks completed using R, particularly focused on data visualization and web scraping. All the projects were made in R markdown, so you can find all the html reports generated as an output in the html folder, with the same name that the rmd file.
 
 # Contents
 
