@@ -4,8 +4,8 @@ Welcome to my R Scripts repository! This repository contains personal projects a
 
 # Contents
 
-## tarea1.rmd
-This script focuses on utilizing graphs and dataframe management to analyze information and extract insights. It includes various visualizations and methods to explore and understand the dataset provided.
+## birth_data_Chile.rmd
+The objective of this exercise is to use the R markdown tool along with some of the most common R libraries, such as tidyverse and dplyr for data manipulation, and ggplot for data visualization. Two hypotheses are proposed and the aim is to confirm or refute them by manipulating and visualizing the data.
 
-## tarea2.rmd
-This script is a web scraper designed to gather information from a website called "buscalibre." It generates a dataset from the scraped data and presents various visualizations to showcase the collected information.
+## WebScraping.rmd
+The objective is to perform a web scraping exercise using R tools such as rvest to generate a dataset, which will then be used to conduct a small analysis.
